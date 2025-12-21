@@ -1,41 +1,59 @@
-# Gemini Business & OpenAI 临时邮箱工具
+# Gemini Business 临时邮箱管理工具
 
-**项目简介**
-- **说明**: 这是一个以 Node.js + Puppeteer 为基础的临时邮箱自动化工具，用于创建/管理临时邮箱并配合 Gemini/业务接口使用。
-代码会唤起带有 UI 界面的浏览器，因此请在图形化系统使用
-**前提条件**
-- **Node.js**: 推荐 Node.js 18+。在 Windows 下请使用 PowerShell (`pwsh.exe`) 或 CMD。
-- **依赖安装**: 项目使用 `puppeteer`（默认会下载 Chromium），以及 `axios`、`js-yaml` 等。
-- **其他项目支持**: 配合 [cloud-mail](https://github.com/maillab/cloud-mail) 邮箱系统使用和 [business-gemini-pool](https://github.com/ddcat666/business-gemini-pool) 2API 系统。
+一个基于 Node.js + Puppeteer 的自动化工具，用于管理临时邮箱并自动完成 Gemini Business 账户的登录与 Token 刷新。
 
+## ✨ 核心功能
 
-**快速开始**
-- **安装依赖**:
+### 📧 邮箱管理
+- **重新获取所有邮箱** - 自动获取母号下的所有子邮箱列表（支持分页获取全部账户）
+- **新建子号** - 支持单个或批量创建子邮箱（最多单次 100 个）
+- **删除子号** - 交互式选择并删除子邮箱
 
-```powershell
+### 🤖 Gemini Business 管理
+- **Token 批量刷新** - 自动登录所有子账户并刷新 Token
+- **同步到 Gemini Pool** - 一键将 Token 同步到 [business-gemini-pool](https://github.com/ddcat666/business-gemini-pool) 平台
+- **定时自动刷新** - 设置 8 小时周期自动刷新，支持两种模式：
+  - 立即执行 + 定时
+  - 跳过首次，仅定时
+- **临时在线使用** - 快速登录任意子账户的网页版
+- **失效账户检测** - 自动检查并清理已失效的账户
+- **账户选择** - 重新选择已注册的企业版账号配置
+
+### 📨 ChatGPT 管理
+- **获取登录验证码** - 从邮箱获取最新的登录验证码
+
+## 🚀 快速开始
+
+### 环境要求
+- **Node.js 18+**（需要原生 fetch 支持）
+- **图形化桌面环境**（Puppeteer 需要显示浏览器界面）
+
+### 安装
+
+```bash
 npm install
 ```
 
-- **运行程序**:
+### 运行
 
-```powershell
+**交互式启动：**
+```bash
 npm start
 ```
 
-- **快速刷新（跳过交互）**：
-
-```powershell
+**快速刷新（跳过交互菜单）：**
+```bash
 npm run quick-refresh
 ```
+等同于执行菜单中的"刷新所有账户 Token 并同步到 Gemini Pool"。
 
-效果等同菜单里的 “（HOT）刷新所有账户 Token 并同步到 Gemini Pool”。
+## ⚙️ 配置文件
 
-**配置说明**
-- 本项目使用 YAML 配置文件，主要有两个配置文件（项目根目录）：
-  - `temp-mail.yaml`：临时邮箱相关配置（必需）
-  - `gemini-mail.yaml`：与 Gemini/池相关的配置（按需）
+项目使用 YAML 配置文件，首次运行前需要创建：
 
-- `temp-mail.yaml` 关键字段（示例）:
+### `temp-mail.yaml`（必需）
+
+临时邮箱服务配置：
 
 ```yaml
 credentials:
@@ -43,28 +61,100 @@ credentials:
   password: your_password_here
 defaultDomain: '@example.com'
 emailApiUrl: 'https://mail.example.com'
-timezone: UTC # 邮件服务器所在位置时区，例如 UTC、UTC+08:00；（大陆服务器为UTC+08:00）
+timezone: 'UTC+08:00'  # 邮件服务器时区
 ```
 
-  - **说明**: `util/config.js` 会读取 `temp-mail.yaml`，并在 `credentials.account` 或 `credentials.password` 为空时抛出错误：
-    > 请在 temp-mail.yaml 中填写 account 与 password 字段后再运行
+### `gemini-mail.yaml`（按需）
 
-- `gemini-mail.yaml` 示例（视业务需要）:
+Gemini Pool 平台配置：
 
 ```yaml
-poolApiUrl: https://example-pool.api
+poolApiUrl: https://your-pool-api.example.com
 password: your_pool_password
+accounts:
+  parent:
+    email: parent@example.com
+    accountId: 123
+  children:
+    - email: child1@example.com
+      accountId: 124
+      tokens:
+        csesidx: "..."
+        host_c_oses: "..."
+        secure_c_ses: "..."
+        team_id: "..."
 ```
 
-**常见问题与排查**
-- Puppeteer 无法启动或报错：
-  - 默认情况下 Puppeteer 会下载 Chromium；如果要使用本地已安装的 Chrome，请在运行前设置环境变量（PowerShell）：
+> 💡 可参考 `temp-mail.example.yaml` 和 `gemini-mail.example.yaml` 创建配置文件。
 
+## 🔧 常见问题
+
+### Puppeteer 无法启动
+
+**默认行为：** `npm install` 时会自动下载 Chrome for Testing 到 `~/.cache/puppeteer` 目录（约 280MB）。
+
+**如果自动下载失败**或想使用本地已安装的 Chrome，可设置环境变量：
+
+**PowerShell：**
 ```powershell
 $env:PUPPETEER_EXECUTABLE_PATH = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
 npm start
 ```
-## 致谢：
-配套的邮箱系统是：[cloud-mail](https://github.com/maillab/cloud-mail)
 
-配套的2API系统是：[business-gemini-pool](https://github.com/ddcat666/business-gemini-pool)
+**CMD：**
+```cmd
+set PUPPETEER_EXECUTABLE_PATH=C:\Program Files\Google\Chrome\Application\chrome.exe
+npm start
+```
+
+**跳过自动下载：** 如果你确定要使用本地 Chrome，可在安装时跳过下载：
+```powershell
+$env:PUPPETEER_SKIP_DOWNLOAD = 'true'
+npm install
+```
+
+**手动安装浏览器：** 如果自动下载失败，可手动触发下载：
+```bash
+npx puppeteer browsers install chrome
+```
+
+### 配置文件缺失
+
+确保 `temp-mail.yaml` 配置了正确的账号密码，否则会提示：
+> 请在 temp-mail.yaml 中填写 account 与 password 字段后再运行
+
+## 📁 项目结构
+
+```
+├── index.js                    # 主程序入口，交互式菜单
+├── util/
+│   ├── config.js               # 配置文件读取（temp-mail.yaml）
+│   ├── auth.js                 # 登录认证模块
+│   ├── puppeteer.js            # Puppeteer 配置
+│   ├── quickRefresh.js         # 快速刷新脚本
+│   ├── selectAccount.js        # 账户选择模块
+│   ├── mail/
+│   │   ├── tempMail.js         # 邮箱列表获取（支持分页）
+│   │   ├── createAccount.js    # 批量创建子号
+│   │   ├── deleteAccount.js    # 删除子号
+│   │   └── getVerificationCode.js  # 获取验证码
+│   └── gemini/
+│       ├── geminiConfig.js     # Gemini 配置读取
+│       ├── geminiAutoRefresh.js # 自动刷新入口
+│       ├── autoRefresh.js      # 自动登录与 Token 获取
+│       ├── updateGeminiPool.js # 同步到 Gemini Pool
+│       ├── cleanInvalidAccounts.js # 清理失效账户
+│       └── selectBusinessAccounts.js # 选择企业版账户
+├── temp-mail.example.yaml      # 临时邮箱配置示例
+├── gemini-mail.example.yaml    # Gemini Pool 配置示例
+└── package.json
+```
+
+## 🔗 相关项目
+
+- **[cloud-mail](https://github.com/maillab/cloud-mail)** - 配套的临时邮箱系统
+- **[business-gemini-pool](https://github.com/ddcat666/business-gemini-pool)** - 配套的 Gemini Business 2API 系统
+
+## 📄 许可证
+
+ISC License

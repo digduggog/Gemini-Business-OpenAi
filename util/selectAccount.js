@@ -48,13 +48,19 @@ async function selectAccount(token, rl, syncFirst = true) {
     console.log("=".repeat(80));
     console.log(`共 ${children.length} 个子号\n`);
 
-    const selection = await prompt("请输入要选择的序号（输入 0 取消）: ", rl);
-    const selectedIndex = parseInt(selection, 10) - 1;
+    const selection = await prompt("请输入要选择的序号（输入 0 取消，输入 all 选择全部）: ", rl);
 
     if (selection === "0") {
         console.log("已取消操作。");
         return null;
     }
+
+    // 支持 all 选项，返回所有子号
+    if (selection.toLowerCase() === "all") {
+        return children; // 返回数组表示选择了全部
+    }
+
+    const selectedIndex = parseInt(selection, 10) - 1;
 
     if (isNaN(selectedIndex) || selectedIndex < 0 || selectedIndex >= children.length) {
         throw new Error("无效的序号");

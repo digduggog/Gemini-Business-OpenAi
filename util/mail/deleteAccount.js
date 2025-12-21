@@ -2,8 +2,6 @@ const config = require("../config");
 const { selectAccount, prompt } = require("../selectAccount");
 const readline = require("readline");
 
-const DELETE_ACCOUNT_URL = "https://mail.sohua.cc/api/account/delete";
-
 /**
  * 确保 fetch API 可用
  */
@@ -31,7 +29,8 @@ function createReadlineInterface() {
 async function performDelete(token, accountId) {
     ensureFetchAvailable();
 
-    const url = `${DELETE_ACCOUNT_URL}?accountId=${accountId}`;
+    const { emailApiUrl } = config.getCredentials();
+    const url = `${emailApiUrl}/api/account/delete?accountId=${accountId}`;
 
     console.log(`正在删除账号 ID: ${accountId}...`);
 
@@ -143,6 +142,50 @@ async function deleteAccount(token, rl = null) {
             return; // 用户取消了操作
         }
 
+        // 检查是否是批量删除（selectAccount 返回数组时表示选择了全部）
+        if (Array.isArray(accountToDelete)) {
+            const accountsToDelete = accountToDelete;
+            console.log(`\n⚠️  即将删除所有 ${accountsToDelete.length} 个子号！`);
+            console.log("-".repeat(50));
+            accountsToDelete.forEach((acc, idx) => {
+                console.log(`  ${idx + 1}. ${acc.email} (ID: ${acc.accountId})`);
+            });
+            console.log("-".repeat(50));
+
+            const confirmAll = await prompt(
+                `⚠️  确认要删除以上所有 ${accountsToDelete.length} 个子号吗？此操作不可撤销！(输入 yes 确认): `,
+                rl
+            );
+
+            if (confirmAll.toLowerCase() !== "yes") {
+                console.log("已取消批量删除操作。");
+                return;
+            }
+
+            // 批量删除
+            console.log("\n开始批量删除...");
+            let successCount = 0;
+            let failCount = 0;
+
+            for (const account of accountsToDelete) {
+                try {
+                    await performDelete(token, account.accountId);
+                    console.log(`✓ 删除成功: ${account.email}`);
+                    successCount++;
+                } catch (error) {
+                    console.log(`✗ 删除失败: ${account.email} - ${error.message}`);
+                    failCount++;
+                }
+                // 添加小延迟避免请求过快
+                await new Promise(resolve => setTimeout(resolve, 300));
+            }
+
+            console.log("\n" + "=".repeat(50));
+            console.log(`批量删除完成！成功: ${successCount}, 失败: ${failCount}`);
+            return;
+        }
+
+        // 单个删除的逻辑
         // 统一进行二次确认
         const confirmed = await confirmDelete(accountToDelete, rl);
         if (!confirmed) {

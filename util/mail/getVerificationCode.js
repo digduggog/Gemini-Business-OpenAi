@@ -1,8 +1,7 @@
 const { selectAccount, prompt } = require("../selectAccount");
 const { getCredentials } = require("../config");
 
-const EMAIL_LIST_URL = "https://mail.sohua.cc/api/email/list";
-const { timezone = "UTC" } = getCredentials();
+const { timezone = "UTC", emailApiUrl } = getCredentials();
 
 /**
  * 确保 fetch API 可用
@@ -76,7 +75,7 @@ function extractVerificationCode(subject) {
 async function fetchEmailList(token, accountId, size = 5) {
     ensureFetchAvailable();
 
-    const url = `${EMAIL_LIST_URL}?accountId=${accountId}&emailId=0&timeSort=0&size=${size}&type=0`;
+    const url = `${emailApiUrl}/api/email/list?accountId=${accountId}&emailId=0&timeSort=0&size=${size}&type=0`;
 
     const response = await fetch(url, {
         method: "GET",
@@ -184,7 +183,7 @@ async function getVerificationCode(token, rl = null) {
 
                 if (!verificationInfo) {
                     console.log("❌ 未找到 ChatGPT 验证码邮件，10秒后重试...");
-                } else if (!isWithinMinutes(verificationInfo.time, 3)) {                    
+                } else if (!isWithinMinutes(verificationInfo.time, 3)) {
                     console.log(`⚠️  找到的验证码邮件时间: ${verificationInfo.time} (ts=${normalizeTimestamp(verificationInfo.time)}) 不是3分钟内的，10秒后重试...`);
                 } else {
                     // 显示验证码信息

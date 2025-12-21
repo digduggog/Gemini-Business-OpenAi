@@ -3,17 +3,17 @@ const yaml = require('js-yaml');
 const fs = require('fs');
 const path = require('path');
 
-// Gemini Pool 平台配置
-const GEMINI_POOL_URL = 'https://mgs.ccode.vip';
+// Gemini Pool 配置文件路径
 const GEMINI_MAIL_FILE = path.join(__dirname, '../../gemini-mail.yaml');
 
 /**
  * 登录 Gemini Pool 平台获取 x-admin-token
  */
-async function loginGeminiPool(password) {
+async function loginGeminiPool(poolApiUrl, password) {
     try {
         console.log('正在登录 Gemini Pool 平台...');
-        const response = await axios.post(`${GEMINI_POOL_URL}/api/auth/login`, {
+        console.log('平台地址:', poolApiUrl);
+        const response = await axios.post(`${poolApiUrl}/api/auth/login`, {
             password: password
         });
 
@@ -50,10 +50,10 @@ function loadAccountsFromYaml() {
 /**
  * 获取 Gemini Pool 平台上的所有账户
  */
-async function getPoolAccounts(adminToken) {
+async function getPoolAccounts(poolApiUrl, adminToken) {
     try {
         console.log('\n正在获取平台账户列表...');
-        const response = await axios.get(`${GEMINI_POOL_URL}/api/accounts`, {
+        const response = await axios.get(`${poolApiUrl}/api/accounts`, {
             headers: {
                 'x-admin-token': adminToken
             }
@@ -78,9 +78,9 @@ async function getPoolAccounts(adminToken) {
 /**
  * 测试单个账户是否可用
  */
-async function testAccount(accountId, adminToken) {
+async function testAccount(poolApiUrl, accountId, adminToken) {
     try {
-        const response = await axios.get(`${GEMINI_POOL_URL}/api/accounts/${accountId}/test`, {
+        const response = await axios.get(`${poolApiUrl}/api/accounts/${accountId}/test`, {
             headers: {
                 'x-admin-token': adminToken
             }
@@ -96,9 +96,9 @@ async function testAccount(accountId, adminToken) {
 /**
  * 删除账户
  */
-async function deleteAccount(accountId, adminToken) {
+async function deleteAccount(poolApiUrl, accountId, adminToken) {
     try {
-        const response = await axios.delete(`${GEMINI_POOL_URL}/api/accounts/${accountId}`, {
+        const response = await axios.delete(`${poolApiUrl}/api/accounts/${accountId}`, {
             headers: {
                 'x-admin-token': adminToken
             }
@@ -114,41 +114,41 @@ async function deleteAccount(accountId, adminToken) {
 /**
  * 删除所有账户
  */
-async function deleteAllAccounts(adminToken) {
+async function deleteAllAccounts(poolApiUrl, adminToken) {
     try {
         // 获取所有账户（按 id 降序删除，避免删除低 id 后高 id 重排导致 404）
-        const accounts = (await getPoolAccounts(adminToken)).sort((a, b) => b.id - a.id);
-        
+        const accounts = (await getPoolAccounts(poolApiUrl, adminToken)).sort((a, b) => b.id - a.id);
+
         if (accounts.length === 0) {
             console.log('平台上没有账户需要删除');
             return 0;
         }
-        
+
         console.log(`\n开始删除所有账户（共 ${accounts.length} 个）...`);
-        
+
         let deletedCount = 0;
-        
+
         for (const account of accounts) {
             const accountId = account.id;
             console.log(`正在删除账户 ID ${accountId}...`);
-            
-            const deleted = await deleteAccount(accountId, adminToken);
+
+            const deleted = await deleteAccount(poolApiUrl, accountId, adminToken);
             if (deleted) {
                 console.log(`✓ 账户 ${accountId} 已删除`);
                 deletedCount++;
             } else {
                 console.log(`✗ 账户 ${accountId} 删除失败`);
             }
-            
+
             // 添加小延迟避免请求过快
             await new Promise(resolve => setTimeout(resolve, 300));
         }
-        
+
         console.log(`\n=== 删除完成 ===`);
         console.log(`已删除: ${deletedCount}/${accounts.length} 个账户`);
-        
+
         return deletedCount;
-        
+
     } catch (error) {
         console.error('删除账户失败:', error.message);
         throw error;
@@ -158,9 +158,9 @@ async function deleteAllAccounts(adminToken) {
 /**
  * 添加新账户到平台
  */
-async function addAccount(accountData, adminToken) {
+async function addAccount(poolApiUrl, accountData, adminToken) {
     try {
-        const response = await axios.post(`${GEMINI_POOL_URL}/api/accounts`, {
+        const response = await axios.post(`${poolApiUrl}/api/accounts`, {
             team_id: accountData.team_id,
             secure_c_ses: accountData.secure_c_ses,
             host_c_oses: accountData.host_c_oses,
@@ -185,13 +185,13 @@ async function addAccount(accountData, adminToken) {
 /**
  * 添加所有账户
  */
-async function addAllAccounts(yamlAccounts, adminToken) {
+async function addAllAccounts(poolApiUrl, yamlAccounts, adminToken) {
     try {
         console.log('\n=== 开始添加账户 ===');
-        
+
         let addedCount = 0;
         let skippedCount = 0;
-        
+
         // 遍历 YAML 中的子账户
         if (yamlAccounts.children && yamlAccounts.children.length > 0) {
             for (const child of yamlAccounts.children) {
@@ -200,7 +200,7 @@ async function addAllAccounts(yamlAccounts, adminToken) {
                     skippedCount++;
                     continue;
                 }
-                
+
                 const accountData = {
                     team_id: child.tokens.team_id,
                     secure_c_ses: child.tokens.secure_c_ses,
@@ -208,32 +208,32 @@ async function addAllAccounts(yamlAccounts, adminToken) {
                     csesidx: child.tokens.csesidx,
                     user_agent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36'
                 };
-                
+
                 console.log(`\n正在添加账户 ${child.email}...`);
-                const success = await addAccount(accountData, adminToken);
-                
+                const success = await addAccount(poolApiUrl, accountData, adminToken);
+
                 if (success) {
                     console.log(`✓ 账户 ${child.email} 添加成功`);
                     addedCount++;
                 } else {
                     console.log(`✗ 账户 ${child.email} 添加失败`);
                 }
-                
+
                 // 添加小延迟
                 await new Promise(resolve => setTimeout(resolve, 300));
             }
         }
-        
+
         // 获取最终账户总数
-        const finalAccounts = await getPoolAccounts(adminToken);
-        
+        const finalAccounts = await getPoolAccounts(poolApiUrl, adminToken);
+
         console.log('\n=== 添加完成 ===');
         console.log(`成功添加: ${addedCount}`);
         console.log(`跳过: ${skippedCount}`);
         console.log(`当前总数: ${finalAccounts.length}`);
-        
+
         return { addedCount, skippedCount, totalCount: finalAccounts.length };
-        
+
     } catch (error) {
         console.error('添加账户失败:', error.message);
         throw error;
@@ -248,8 +248,14 @@ async function updateGeminiPool() {
         // 1. 读取 gemini-mail.yaml
         console.log('读取账户信息...');
         const yamlData = loadAccountsFromYaml();
+        const poolApiUrl = yamlData.poolApiUrl;
         const password = yamlData.password;
         const accounts = yamlData.accounts;
+
+        if (!poolApiUrl) {
+            console.log('❌ gemini-mail.yaml 中没有配置 poolApiUrl');
+            return;
+        }
 
         if (!accounts.children || accounts.children.length === 0) {
             console.log('❌ gemini-mail.yaml 中没有子账户，请先选择账户');
@@ -257,13 +263,13 @@ async function updateGeminiPool() {
         }
 
         // 2. 登录获取 token
-        const adminToken = await loginGeminiPool(password);
+        const adminToken = await loginGeminiPool(poolApiUrl, password);
 
         // 3. 删除所有账户
-        await deleteAllAccounts(adminToken);
+        await deleteAllAccounts(poolApiUrl, adminToken);
 
         // 4. 添加所有账户
-        await addAllAccounts(accounts, adminToken);
+        await addAllAccounts(poolApiUrl, accounts, adminToken);
 
         console.log('\n✓ 所有任务完成！');
 

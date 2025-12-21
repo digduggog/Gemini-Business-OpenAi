@@ -25,6 +25,33 @@ function promptInput(question, rl) {
 }
 
 /**
+ * 生成随机英文名字
+ * @returns {string} 随机名字
+ */
+function generateRandomName() {
+    const firstNames = [
+        'James', 'John', 'Robert', 'Michael', 'William', 'David', 'Richard', 'Joseph',
+        'Thomas', 'Charles', 'Mary', 'Patricia', 'Jennifer', 'Linda', 'Elizabeth',
+        'Barbara', 'Susan', 'Jessica', 'Sarah', 'Karen', 'Emma', 'Olivia', 'Ava',
+        'Isabella', 'Sophia', 'Mia', 'Charlotte', 'Amelia', 'Harper', 'Evelyn',
+        'Daniel', 'Matthew', 'Anthony', 'Mark', 'Donald', 'Steven', 'Andrew', 'Paul',
+        'Joshua', 'Kenneth', 'Kevin', 'Brian', 'George', 'Timothy', 'Ronald', 'Edward'
+    ];
+    const lastNames = [
+        'Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis',
+        'Rodriguez', 'Martinez', 'Hernandez', 'Lopez', 'Gonzalez', 'Wilson', 'Anderson',
+        'Thomas', 'Taylor', 'Moore', 'Jackson', 'Martin', 'Lee', 'Perez', 'Thompson',
+        'White', 'Harris', 'Sanchez', 'Clark', 'Ramirez', 'Lewis', 'Robinson', 'Walker',
+        'Young', 'Allen', 'King', 'Wright', 'Scott', 'Torres', 'Nguyen', 'Hill', 'Flores'
+    ];
+
+    const firstName = firstNames[Math.floor(Math.random() * firstNames.length)];
+    const lastName = lastNames[Math.floor(Math.random() * lastNames.length)];
+
+    return `${firstName} ${lastName}`;
+}
+
+/**
  * 判断时间是否在指定分钟内
  * @param {string|number|Date} time
  * @param {number} minutes
@@ -150,10 +177,10 @@ async function waitForGeminiVerificationCode(token, accountId) {
 
     for (let i = 0; i < maxRetries; i++) {
         console.log(`   ⏳ 正在获取验证码... (尝试 ${i + 1}/${maxRetries})`);
-        
+
         try {
             const emailData = await fetchEmailList(token, accountId, 5);
-            
+
             if (emailData.list && emailData.list.length > 0) {
                 const sortedList = [...emailData.list].sort((a, b) => normalizeTimestamp(b.createTime) - normalizeTimestamp(a.createTime));
                 const latestMail = sortedList[0];
@@ -223,53 +250,166 @@ function verifyParentAccount(currentLoginEmail) {
  * 登录单个 Gemini 子号并获取 token
  * @param {Object} childAccount - 子号信息
  * @param {string} token - 已登录的会话令牌（用于获取邮件）
+ * @param {number} maxRetries - 最大重试次数（用于错误页面重试）
  * @returns {Promise<Object>} 返回包含 4 个 token 的对象
  */
-async function loginGeminiChild(childAccount, token) {
+async function loginGeminiChild(childAccount, token, maxRetries = 10) {
     console.log(`\n🔄 正在登录子号: ${childAccount.email}`);
     console.log(`   账号ID: ${childAccount.accountId}`);
     console.log(`   邮箱: ${childAccount.email}`);
 
     const puppeteer = require('puppeteer');
-    
+
     let browser;
     try {
         // 1. 启动浏览器
-        console.log(`   ⏳ 启动浏览器...`);
+        console.log(`   ⏳ 启动浏览器（无痕模式）...`);
         browser = await puppeteer.launch({
             headless: false, // 显示浏览器界面，方便调试
-            args: ['--no-sandbox', '--disable-setuid-sandbox']
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--incognito']
         });
 
-        const page = await browser.newPage();
-        
+        // 在无痕模式下获取页面（通过 --incognito 参数启动后，需要获取无痕上下文的页面）
+        const pages = await browser.pages();
+        const page = pages[0] || await browser.newPage();
+
         // 2. 访问 Gemini 登录页面
         console.log(`   ⏳ 访问 Gemini 登录页面...`);
         await page.goto('https://auth.business.gemini.google/login?continueUrl=https://business.gemini.google/');
         await new Promise(resolve => setTimeout(resolve, 3000));
 
-        // 3. 填入邮箱
-        console.log(`   ⏳ 填入邮箱...`);
-        const emailSelector = '#email-input';
-        await page.waitForSelector(emailSelector);
-        await page.type(emailSelector, childAccount.email);
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
-        // 4. 点击下一步按钮
-        console.log(`   ⏳ 点击下一步按钮...`);
-        const nextButtonSelector = '#log-in-button';
-        await page.click(nextButtonSelector);
-        await new Promise(resolve => setTimeout(resolve, 3000));
-
-        // 5. 等待验证码输入框出现
-        console.log(`   ⏳ 等待验证码输入框...`);
+        // 登录流程（支持重试）
+        let retryCount = 0;
+        let verificationCodeInputFound = false;
         const verificationCodeSelector = 'input[name="pinInput"]';
-        await page.waitForSelector(verificationCodeSelector);
-        
+
+        while (!verificationCodeInputFound && retryCount < maxRetries) {
+            // 3. 填入邮箱
+            console.log(`   ⏳ 填入邮箱...${retryCount > 0 ? ` (重试 ${retryCount}/${maxRetries})` : ''}`);
+            const emailSelector = '#email-input';
+            await page.waitForSelector(emailSelector);
+
+            // 清空输入框后再输入（用于重试场景）
+            await page.evaluate((selector) => {
+                document.querySelector(selector).value = '';
+            }, emailSelector);
+            await page.type(emailSelector, childAccount.email);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            // 4. 点击下一步按钮
+            console.log(`   ⏳ 点击下一步按钮...`);
+            const nextButtonSelector = '#log-in-button';
+            await page.click(nextButtonSelector);
+            await new Promise(resolve => setTimeout(resolve, 3000));
+
+            // 5. 等待验证码输入框出现，同时检测错误页面
+            console.log(`   ⏳ 等待验证码输入框...`);
+
+            try {
+                // 使用 Promise.race 同时检测验证码输入框和错误页面
+                const result = await Promise.race([
+                    page.waitForSelector(verificationCodeSelector, { timeout: 15000 }).then(() => 'verification'),
+                    page.waitForSelector('a[href*="signin-error"]', { timeout: 15000 }).then(() => 'error'),
+                    page.waitForFunction(
+                        () => document.body.innerText.includes('请试试其他方法'),
+                        { timeout: 15000 }
+                    ).then(() => 'error_text')
+                ]);
+
+                if (result === 'verification') {
+                    verificationCodeInputFound = true;
+                    console.log(`   ✓ 验证码输入框已出现`);
+                } else {
+                    // 检测到错误页面
+                    console.log(`   ⚠️  检测到错误页面，尝试点击"注册或登录"按钮重新尝试...`);
+                    retryCount++;
+
+                    // 尝试多种选择器来点击"注册或登录"按钮
+                    const retryButtonSelectors = [
+                        'a:has-text("注册或登录")',
+                        'button:has-text("注册或登录")',
+                        'a[href*="login"]',
+                        'button[type="button"]'
+                    ];
+
+                    let buttonClicked = false;
+
+                    // 尝试使用 page.evaluate 点击包含特定文本的按钮/链接
+                    buttonClicked = await page.evaluate(() => {
+                        // 查找包含"注册或登录"文本的元素
+                        const elements = document.querySelectorAll('a, button');
+                        for (const el of elements) {
+                            if (el.textContent.includes('注册或登录')) {
+                                el.click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    });
+
+                    if (!buttonClicked) {
+                        // 备用方案：通过 XPath 查找
+                        const [button] = await page.$x("//a[contains(text(), '注册或登录')] | //button[contains(text(), '注册或登录')]");
+                        if (button) {
+                            await button.click();
+                            buttonClicked = true;
+                        }
+                    }
+
+                    if (buttonClicked) {
+                        console.log(`   ✓ 已点击"注册或登录"按钮，等待页面加载...`);
+                        await new Promise(resolve => setTimeout(resolve, 3000));
+                    } else {
+                        console.log(`   ⚠️  未找到"注册或登录"按钮，尝试直接导航到登录页...`);
+                        await page.goto('https://auth.business.gemini.google/login?continueUrl=https://business.gemini.google/');
+                        await new Promise(resolve => setTimeout(resolve, 3000));
+                    }
+                }
+            } catch (waitError) {
+                // 超时或其他错误，检查是否是错误页面
+                const isErrorPage = await page.evaluate(() => {
+                    return document.body.innerText.includes('请试试其他方法');
+                });
+
+                if (isErrorPage) {
+                    console.log(`   ⚠️  检测到错误页面（超时后检测），尝试重新登录...`);
+                    retryCount++;
+
+                    // 点击"注册或登录"按钮
+                    const buttonClicked = await page.evaluate(() => {
+                        const elements = document.querySelectorAll('a, button');
+                        for (const el of elements) {
+                            if (el.textContent.includes('注册或登录')) {
+                                el.click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    });
+
+                    if (buttonClicked) {
+                        console.log(`   ✓ 已点击"注册或登录"按钮，等待页面加载...`);
+                        await new Promise(resolve => setTimeout(resolve, 3000));
+                    } else {
+                        console.log(`   ⚠️  未找到"注册或登录"按钮，尝试直接导航到登录页...`);
+                        await page.goto('https://auth.business.gemini.google/login?continueUrl=https://business.gemini.google/');
+                        await new Promise(resolve => setTimeout(resolve, 3000));
+                    }
+                } else {
+                    // 不是错误页面，可能是网络问题，直接抛出错误
+                    throw waitError;
+                }
+            }
+        }
+
+        if (!verificationCodeInputFound) {
+            throw new Error(`在 ${maxRetries} 次重试后仍无法进入验证码输入页面`);
+        }
+
         // 6. 等待页面加载完毕，给邮件发送留出时间
         console.log(`   ⏳ 等待邮件发送（10秒）...`);
         await new Promise(resolve => setTimeout(resolve, 10000));
-        
+
         // 7. 自动从邮箱获取验证码
         console.log(`   ⏳ 正在从邮箱获取验证码...`);
         const verificationCode = await waitForGeminiVerificationCode(token, childAccount.accountId);
@@ -294,41 +434,127 @@ async function loginGeminiChild(childAccount, token) {
         await new Promise(resolve => setTimeout(resolve, 3000));
 
         console.log(`   ✓ 验证完成，等待页面跳转...`);
-        
+
         // 10. 等待页面跳转到 Gemini Business 主页（可能需要多次跳转）
         console.log(`   ⏳ 等待页面完全加载（最多60秒）...`);
-        
+
         // 等待 URL 包含 /cid/ 路径（表示已经到达聊天页面）
         const maxWaitTime = 60000; // 60秒
         const startTime = Date.now();
         let currentUrl = page.url();
-        
+
         while (!currentUrl.includes('/cid/') && (Date.now() - startTime) < maxWaitTime) {
             console.log(`      当前 URL: ${currentUrl}`);
-            console.log(`      等待跳转到聊天页面...`);
+
+            // 检测是否是新账号注册页面（需要填写姓名）
+            if (currentUrl.includes('/admin/create')) {
+                console.log(`   📝 检测到新账号注册页面，自动填写姓名...`);
+
+                try {
+                    // 等待页面加载
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+
+                    // 生成随机名字
+                    const randomName = generateRandomName();
+                    console.log(`   📝 填入名字: ${randomName}`);
+
+                    // 使用多种方式尝试找到并填写输入框
+                    const inputFilled = await page.evaluate((name) => {
+                        // 尝试多种选择器
+                        const selectors = [
+                            'input[aria-label="全名"]',
+                            'input[placeholder="全名"]',
+                            'input[type="text"]',
+                            'input[name="name"]',
+                            'input[name="fullName"]',
+                            'input'
+                        ];
+
+                        for (const selector of selectors) {
+                            const inputs = document.querySelectorAll(selector);
+                            for (const input of inputs) {
+                                // 检查输入框是否可见且可编辑
+                                if (input.offsetParent !== null && !input.disabled && !input.readOnly) {
+                                    input.focus();
+                                    input.value = name;
+                                    // 触发 input 事件
+                                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                                    return true;
+                                }
+                            }
+                        }
+                        return false;
+                    }, randomName);
+
+                    if (inputFilled) {
+                        console.log(`   ✓ 名字填写成功`);
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                    } else {
+                        console.log(`   ⚠️  未找到输入框，尝试使用键盘输入...`);
+                        // 尝试直接键盘输入
+                        await page.keyboard.type(randomName, { delay: 50 });
+                    }
+
+                    // 点击"同意并开始使用"按钮
+                    console.log(`   📝 点击"同意并开始使用"按钮...`);
+                    const agreeButtonClicked = await page.evaluate(() => {
+                        const buttons = document.querySelectorAll('button');
+                        for (const btn of buttons) {
+                            if (btn.textContent.includes('同意并开始使用') ||
+                                btn.textContent.includes('开始使用') ||
+                                btn.textContent.includes('继续')) {
+                                btn.click();
+                                return true;
+                            }
+                        }
+                        // 尝试查找提交类型的按钮
+                        const submitBtn = document.querySelector('button[type="submit"]');
+                        if (submitBtn) {
+                            submitBtn.click();
+                            return true;
+                        }
+                        return false;
+                    });
+
+                    if (agreeButtonClicked) {
+                        console.log(`   ✓ 已完成新账号注册，等待跳转...`);
+                        await new Promise(resolve => setTimeout(resolve, 5000));
+                    } else {
+                        console.log(`   ⚠️  未找到按钮，尝试按回车键...`);
+                        await page.keyboard.press('Enter');
+                        await new Promise(resolve => setTimeout(resolve, 5000));
+                    }
+                } catch (nameError) {
+                    console.log(`   ⚠️  处理新账号注册页面时出错: ${nameError.message}`);
+                }
+            } else {
+                console.log(`      等待跳转到聊天页面...`);
+            }
+
             await new Promise(resolve => setTimeout(resolve, 3000));
             currentUrl = page.url();
         }
-        
+
         // 再等待一段时间确保页面完全加载
         console.log(`   ⏳ 页面已跳转，等待完全加载（10秒）...`);
         await new Promise(resolve => setTimeout(resolve, 10000));
 
         // 11. 获取 4 个 token
         console.log(`   ⏳ 获取 token...`);
-        
+
         // 获取所有 cookies
         const cookies = await page.cookies();
-        
+
         // 从 cookies 中提取需要的值
         const secure_c_ses = cookies.find(c => c.name === '__Secure-C_SES')?.value || null;
         const host_c_oses = cookies.find(c => c.name === '__Host-C_OSES')?.value || '';
-        
+
         // 从 URL 中提取 csesidx 和 team_id (config_id)
         currentUrl = page.url();
         const urlParams = new URLSearchParams(new URL(currentUrl).search);
         const csesidx = urlParams.get('csesidx') || null;
-        
+
         // 从 URL 路径中提取 team_id (在 /cid/ 后面)
         const pathMatch = currentUrl.match(/\/cid\/([^/?]+)/);
         const team_id = pathMatch ? pathMatch[1] : null;
@@ -356,7 +582,7 @@ async function loginGeminiChild(childAccount, token) {
         console.log(`      team_id: ${team_id}`);
         console.log(`      secure_c_ses: ${secure_c_ses.substring(0, 20)}...`);
         console.log(`      host_c_oses: ${host_c_oses ? host_c_oses.substring(0, 20) + '...' : '(空)'}`);
-        
+
         return tokens;
 
     } catch (error) {
@@ -374,8 +600,9 @@ async function loginGeminiChild(childAccount, token) {
  * @param {Object} childAccount - 子号信息
  * @param {string} token - 已登录的会话令牌（用于获取邮件）
  * @param {Object} rl - readline 接口
+ * @param {number} maxRetries - 最大重试次数（用于错误页面重试）
  */
-async function openGeminiChildInteractive(token, childAccount, rl) {
+async function openGeminiChildInteractive(token, childAccount, rl, maxRetries = 10) {
     if (!rl) {
         throw new Error("缺少 readline 接口");
     }
@@ -386,33 +613,134 @@ async function openGeminiChildInteractive(token, childAccount, rl) {
     let success = false;
 
     try {
-        console.log(`   ⏳ 启动浏览器...`);
+        console.log(`   ⏳ 启动浏览器（无痕模式）...`);
         browser = await puppeteer.launch({
             headless: false,
-            args: ["--no-sandbox", "--disable-setuid-sandbox"],
+            args: ["--no-sandbox", "--disable-setuid-sandbox", "--incognito"],
             defaultViewport: null, // 不限制页面视口，方便用户完整使用
         });
 
-        const page = await browser.newPage();
+        // 在无痕模式下获取页面
+        const pages = await browser.pages();
+        const page = pages[0] || await browser.newPage();
 
         console.log(`   ⏳ 访问 Gemini 登录页面...`);
         await page.goto("https://auth.business.gemini.google/login?continueUrl=https://business.gemini.google/");
         await new Promise((resolve) => setTimeout(resolve, 3000));
 
-        console.log(`   ⏳ 填入邮箱...`);
-        const emailSelector = "#email-input";
-        await page.waitForSelector(emailSelector);
-        await page.type(emailSelector, childAccount.email);
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-
-        console.log(`   ⏳ 点击下一步按钮...`);
-        const nextButtonSelector = "#log-in-button";
-        await page.click(nextButtonSelector);
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-
-        console.log(`   ⏳ 等待验证码输入框...`);
+        // 登录流程（支持重试）
+        let retryCount = 0;
+        let verificationCodeInputFound = false;
         const verificationCodeSelector = 'input[name="pinInput"]';
-        await page.waitForSelector(verificationCodeSelector);
+
+        while (!verificationCodeInputFound && retryCount < maxRetries) {
+            console.log(`   ⏳ 填入邮箱...${retryCount > 0 ? ` (重试 ${retryCount}/${maxRetries})` : ''}`);
+            const emailSelector = "#email-input";
+            await page.waitForSelector(emailSelector);
+
+            // 清空输入框后再输入（用于重试场景）
+            await page.evaluate((selector) => {
+                document.querySelector(selector).value = '';
+            }, emailSelector);
+            await page.type(emailSelector, childAccount.email);
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            console.log(`   ⏳ 点击下一步按钮...`);
+            const nextButtonSelector = "#log-in-button";
+            await page.click(nextButtonSelector);
+            await new Promise((resolve) => setTimeout(resolve, 3000));
+
+            console.log(`   ⏳ 等待验证码输入框...`);
+
+            try {
+                // 使用 Promise.race 同时检测验证码输入框和错误页面
+                const result = await Promise.race([
+                    page.waitForSelector(verificationCodeSelector, { timeout: 15000 }).then(() => 'verification'),
+                    page.waitForSelector('a[href*="signin-error"]', { timeout: 15000 }).then(() => 'error'),
+                    page.waitForFunction(
+                        () => document.body.innerText.includes('请试试其他方法'),
+                        { timeout: 15000 }
+                    ).then(() => 'error_text')
+                ]);
+
+                if (result === 'verification') {
+                    verificationCodeInputFound = true;
+                    console.log(`   ✓ 验证码输入框已出现`);
+                } else {
+                    // 检测到错误页面
+                    console.log(`   ⚠️  检测到错误页面，尝试点击"注册或登录"按钮重新尝试...`);
+                    retryCount++;
+
+                    // 尝试使用 page.evaluate 点击包含特定文本的按钮/链接
+                    let buttonClicked = await page.evaluate(() => {
+                        const elements = document.querySelectorAll('a, button');
+                        for (const el of elements) {
+                            if (el.textContent.includes('注册或登录')) {
+                                el.click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    });
+
+                    if (!buttonClicked) {
+                        // 备用方案：通过 XPath 查找
+                        const [button] = await page.$x("//a[contains(text(), '注册或登录')] | //button[contains(text(), '注册或登录')]");
+                        if (button) {
+                            await button.click();
+                            buttonClicked = true;
+                        }
+                    }
+
+                    if (buttonClicked) {
+                        console.log(`   ✓ 已点击"注册或登录"按钮，等待页面加载...`);
+                        await new Promise((resolve) => setTimeout(resolve, 3000));
+                    } else {
+                        console.log(`   ⚠️  未找到"注册或登录"按钮，尝试直接导航到登录页...`);
+                        await page.goto("https://auth.business.gemini.google/login?continueUrl=https://business.gemini.google/");
+                        await new Promise((resolve) => setTimeout(resolve, 3000));
+                    }
+                }
+            } catch (waitError) {
+                // 超时或其他错误，检查是否是错误页面
+                const isErrorPage = await page.evaluate(() => {
+                    return document.body.innerText.includes('请试试其他方法');
+                });
+
+                if (isErrorPage) {
+                    console.log(`   ⚠️  检测到错误页面（超时后检测），尝试重新登录...`);
+                    retryCount++;
+
+                    // 点击"注册或登录"按钮
+                    const buttonClicked = await page.evaluate(() => {
+                        const elements = document.querySelectorAll('a, button');
+                        for (const el of elements) {
+                            if (el.textContent.includes('注册或登录')) {
+                                el.click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    });
+
+                    if (buttonClicked) {
+                        console.log(`   ✓ 已点击"注册或登录"按钮，等待页面加载...`);
+                        await new Promise((resolve) => setTimeout(resolve, 3000));
+                    } else {
+                        console.log(`   ⚠️  未找到"注册或登录"按钮，尝试直接导航到登录页...`);
+                        await page.goto("https://auth.business.gemini.google/login?continueUrl=https://business.gemini.google/");
+                        await new Promise((resolve) => setTimeout(resolve, 3000));
+                    }
+                } else {
+                    // 不是错误页面，可能是网络问题，直接抛出错误
+                    throw waitError;
+                }
+            }
+        }
+
+        if (!verificationCodeInputFound) {
+            throw new Error(`在 ${maxRetries} 次重试后仍无法进入验证码输入页面`);
+        }
 
         console.log(`   ⏳ 等待邮件发送（10秒）...`);
         await new Promise((resolve) => setTimeout(resolve, 10000));
@@ -440,7 +768,93 @@ async function openGeminiChildInteractive(token, childAccount, rl) {
         let currentUrl = page.url();
         while (!currentUrl.includes("/cid/") && Date.now() - startTime < maxWaitTime) {
             console.log(`      当前 URL: ${currentUrl}`);
-            console.log(`      等待跳转到聊天页面...`);
+
+            // 检测是否是新账号注册页面（需要填写姓名）
+            if (currentUrl.includes('/admin/create')) {
+                console.log(`   📝 检测到新账号注册页面，自动填写姓名...`);
+
+                try {
+                    // 等待页面加载
+                    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+                    // 生成随机名字
+                    const randomName = generateRandomName();
+                    console.log(`   📝 填入名字: ${randomName}`);
+
+                    // 使用多种方式尝试找到并填写输入框
+                    const inputFilled = await page.evaluate((name) => {
+                        // 尝试多种选择器
+                        const selectors = [
+                            'input[aria-label="全名"]',
+                            'input[placeholder="全名"]',
+                            'input[type="text"]',
+                            'input[name="name"]',
+                            'input[name="fullName"]',
+                            'input'
+                        ];
+
+                        for (const selector of selectors) {
+                            const inputs = document.querySelectorAll(selector);
+                            for (const input of inputs) {
+                                // 检查输入框是否可见且可编辑
+                                if (input.offsetParent !== null && !input.disabled && !input.readOnly) {
+                                    input.focus();
+                                    input.value = name;
+                                    // 触发 input 事件
+                                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                                    return true;
+                                }
+                            }
+                        }
+                        return false;
+                    }, randomName);
+
+                    if (inputFilled) {
+                        console.log(`   ✓ 名字填写成功`);
+                        await new Promise((resolve) => setTimeout(resolve, 1000));
+                    } else {
+                        console.log(`   ⚠️  未找到输入框，尝试使用键盘输入...`);
+                        // 尝试直接键盘输入
+                        await page.keyboard.type(randomName, { delay: 50 });
+                    }
+
+                    // 点击"同意并开始使用"按钮
+                    console.log(`   📝 点击"同意并开始使用"按钮...`);
+                    const agreeButtonClicked = await page.evaluate(() => {
+                        const buttons = document.querySelectorAll('button');
+                        for (const btn of buttons) {
+                            if (btn.textContent.includes('同意并开始使用') ||
+                                btn.textContent.includes('开始使用') ||
+                                btn.textContent.includes('继续')) {
+                                btn.click();
+                                return true;
+                            }
+                        }
+                        // 尝试查找提交类型的按钮
+                        const submitBtn = document.querySelector('button[type="submit"]');
+                        if (submitBtn) {
+                            submitBtn.click();
+                            return true;
+                        }
+                        return false;
+                    });
+
+                    if (agreeButtonClicked) {
+                        console.log(`   ✓ 已完成新账号注册，等待跳转...`);
+                        await new Promise((resolve) => setTimeout(resolve, 5000));
+                    } else {
+                        console.log(`   ⚠️  未找到按钮，尝试按回车键...`);
+                        await page.keyboard.press('Enter');
+                        await new Promise((resolve) => setTimeout(resolve, 5000));
+                    }
+                } catch (nameError) {
+                    console.log(`   ⚠️  处理新账号注册页面时出错: ${nameError.message}`);
+                }
+            } else {
+                console.log(`      等待跳转到聊天页面...`);
+            }
+
             await new Promise((resolve) => setTimeout(resolve, 3000));
             currentUrl = page.url();
         }
@@ -472,24 +886,42 @@ async function openGeminiChildInteractive(token, childAccount, rl) {
 }
 
 /**
- * 更新单个子号的 token
+ * 更新单个子号的 token（带整体重试机制）
  * @param {Object} childAccount - 子号信息
  * @param {string} token - 已登录的会话令牌
+ * @param {number} maxAccountRetries - 账号级别最大重试次数
  */
-async function refreshChildToken(childAccount, token) {
-    try {
-        // 登录并获取新 token
-        const newTokens = await loginGeminiChild(childAccount, token);
+async function refreshChildToken(childAccount, token, maxAccountRetries = 3) {
+    let lastError = null;
 
-        // 更新到配置文件
-        updateChildToken(childAccount.email, newTokens);
+    for (let attempt = 1; attempt <= maxAccountRetries; attempt++) {
+        try {
+            if (attempt > 1) {
+                console.log(`\n   🔄 正在重试账号 ${childAccount.email}（第 ${attempt}/${maxAccountRetries} 次）...`);
+                // 重试前等待一段时间
+                await new Promise(resolve => setTimeout(resolve, 3000));
+            }
 
-        console.log(`   ✓ Token 已更新到配置文件`);
-        return { success: true, email: childAccount.email, tokens: newTokens };
-    } catch (error) {
-        console.error(`   ❌ 刷新失败: ${error.message}`);
-        return { success: false, email: childAccount.email, error: error.message };
+            // 登录并获取新 token
+            const newTokens = await loginGeminiChild(childAccount, token);
+
+            // 更新到配置文件
+            updateChildToken(childAccount.email, newTokens);
+
+            console.log(`   ✓ Token 已更新到配置文件`);
+            return { success: true, email: childAccount.email, tokens: newTokens };
+        } catch (error) {
+            lastError = error;
+            console.error(`   ❌ 刷新失败: ${error.message}`);
+
+            if (attempt < maxAccountRetries) {
+                console.log(`   ⏳ 将在 3 秒后重试...`);
+            }
+        }
     }
+
+    console.error(`   ❌ 账号 ${childAccount.email} 在 ${maxAccountRetries} 次尝试后仍然失败`);
+    return { success: false, email: childAccount.email, error: lastError?.message || '未知错误' };
 }
 
 /**

@@ -1,7 +1,5 @@
 const config = require("../config");
 
-const ACCOUNT_LIST_URL = "https://mail.sohua.cc/api/account/list?accountId=0&size=100";
-
 /**
  * 重新获取所有邮箱列表
  * @param {string} token - 已登录的会话令牌
@@ -14,7 +12,7 @@ async function registerTempEmail(token) {
   const credentials = config.getCredentials();
 
   console.log("正在获取邮箱列表...");
-  const accountList = await fetchAccountList(token);
+  const accountList = await fetchAccountList(token, credentials.emailApiUrl);
   const { parent, children } = splitAccounts(accountList, credentials.loginEmail);
 
   config.persistAccountsSnapshot({ parent, children });
@@ -32,33 +30,68 @@ function ensureFetchAvailable() {
   }
 }
 
-async function fetchAccountList(token) {
+async function fetchAccountList(token, emailApiUrl) {
   ensureFetchAvailable();
 
+  const allAccounts = [];
+  let lastAccountId = 0;
+  const pageSize = 30; // 上游服务限制每次最多返回30条
+  let pageNum = 1;
+
   console.log("开始请求邮箱列表，使用 token:", token);
-  const response = await fetch(ACCOUNT_LIST_URL, {
-    headers: {
-      Authorization: `${token}`,
-    },
-  });
 
-  if (!response.ok) {
-    throw new Error(`获取邮箱列表失败，HTTP 状态码 ${response.status}`);
+  // 循环分页获取所有账户
+  while (true) {
+    const accountListUrl = `${emailApiUrl}/api/account/list?accountId=${lastAccountId}&size=${pageSize}`;
+    console.log(`请求第 ${pageNum} 页: ${accountListUrl}`);
+
+    const response = await fetch(accountListUrl, {
+      headers: {
+        Authorization: `${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`获取邮箱列表失败，HTTP 状态码 ${response.status}`);
+    }
+
+    const listText = await response.text();
+    let payload;
+    try {
+      payload = JSON.parse(listText);
+    } catch (error) {
+      throw new Error(`邮箱列表响应无法解析为 JSON: ${error.message}`);
+    }
+
+    if (payload.code !== 200 || !Array.isArray(payload.data)) {
+      throw new Error(`邮箱列表 API 返回异常: ${payload.message || "未知"}`);
+    }
+
+    const accounts = payload.data;
+
+    if (accounts.length === 0) {
+      // 没有更多数据了
+      break;
+    }
+
+    allAccounts.push(...accounts);
+    console.log(`  获取到 ${accounts.length} 个账户，累计 ${allAccounts.length} 个`);
+
+    // 如果返回的数量小于 pageSize，说明已经是最后一页
+    if (accounts.length < pageSize) {
+      break;
+    }
+
+    // 获取最后一个账户的 ID 作为下一页的起始点
+    lastAccountId = accounts[accounts.length - 1].accountId;
+    pageNum++;
+
+    // 添加小延迟避免请求过快
+    await new Promise(resolve => setTimeout(resolve, 200));
   }
 
-  const listText = await response.text();
-  let payload;
-  try {
-    payload = JSON.parse(listText);
-  } catch (error) {
-    throw new Error(`邮箱列表响应无法解析为 JSON: ${error.message}`);
-  }
-
-  if (payload.code !== 200 || !Array.isArray(payload.data)) {
-    throw new Error(`邮箱列表 API 返回异常: ${payload.message || "未知"}`);
-  }
-
-  return payload.data;
+  console.log(`✓ 共获取到 ${allAccounts.length} 个账户`);
+  return allAccounts;
 }
 
 function splitAccounts(list, loginEmail) {

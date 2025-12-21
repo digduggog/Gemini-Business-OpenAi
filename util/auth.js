@@ -1,7 +1,5 @@
 const config = require("./config");
 
-const LOGIN_URL = "https://mail.sohua.cc/api/login";
-
 /**
  * 确保 fetch API 可用
  */
@@ -14,8 +12,10 @@ function ensureFetchAvailable() {
 /**
  * 执行母号登录，返回 token
  */
-async function performLogin({ account, password, defaultDomain, loginEmail }) {
+async function performLogin({ account, password, defaultDomain, loginEmail, emailApiUrl }) {
     ensureFetchAvailable();
+
+    const loginUrl = `${emailApiUrl}/api/login`;
 
     const requestPayload = {
         email: loginEmail,
@@ -23,8 +23,9 @@ async function performLogin({ account, password, defaultDomain, loginEmail }) {
     };
     console.log("正在登录母号...");
     console.log("登录邮箱:", loginEmail);
+    console.log("登录地址:", loginUrl);
 
-    const response = await fetch(LOGIN_URL, {
+    const response = await fetch(loginUrl, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",

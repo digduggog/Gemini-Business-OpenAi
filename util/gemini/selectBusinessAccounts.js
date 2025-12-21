@@ -43,13 +43,13 @@ function saveSelectedAccounts(parent, selectedChildren, poolApiUrl, password) {
                 children: selectedChildren
             }
         };
-        
+
         const yamlContent = yaml.dump(data, {
             indent: 2,
             lineWidth: -1,
             noRefs: true
         });
-        
+
         fs.writeFileSync(GEMINI_MAIL_FILE, yamlContent, 'utf8');
         console.log(`✓ 已保存 ${selectedChildren.length} 个账户到 gemini-mail.yaml`);
     } catch (error) {
@@ -58,12 +58,20 @@ function saveSelectedAccounts(parent, selectedChildren, poolApiUrl, password) {
 }
 
 /**
- * 解析用户输入的序号（支持单个或逗号分隔）
+ * 解析用户输入的序号（支持单个、逗号分隔或 all）
+ * @param {string} input - 用户输入
+ * @param {number} maxCount - 最大序号（用于 all）
+ * @returns {number[]} 选中的序号数组
  */
-function parseSelection(input) {
+function parseSelection(input, maxCount) {
+    // 支持 all 关键字
+    if (input.toLowerCase() === 'all') {
+        return Array.from({ length: maxCount }, (_, i) => i + 1);
+    }
+
     const selections = input.split(',').map(s => s.trim()).filter(s => s);
     const numbers = [];
-    
+
     for (const sel of selections) {
         const num = parseInt(sel, 10);
         if (isNaN(num) || num < 1) {
@@ -71,7 +79,7 @@ function parseSelection(input) {
         }
         numbers.push(num);
     }
-    
+
     return [...new Set(numbers)]; // 去重
 }
 
@@ -81,45 +89,45 @@ function parseSelection(input) {
 async function selectBusinessAccounts(rl) {
     try {
         console.log('\n正在读取邮箱列表...');
-        
+
         // 读取 temp-mail.yaml 中的所有子号
         const tempMailAccounts = loadTempMailAccounts();
         const children = tempMailAccounts.children || [];
-        
+
         if (children.length === 0) {
             console.log('❌ 没有找到任何子号，请先在邮箱管理中创建子号');
             return;
         }
-        
+
         // 读取 gemini-mail.yaml 的配置
         const geminiConfig = loadGeminiMailConfig();
         const poolApiUrl = geminiConfig.poolApiUrl || 'https://mgs.ccode.vip';
         const password = geminiConfig.password || '';
-        
+
         console.log('\n可用的子号列表：');
         console.log('-'.repeat(50));
         children.forEach((child, index) => {
             console.log(`  ${index + 1}. ${child.email} (ID: ${child.accountId})`);
         });
         console.log('-'.repeat(50));
-        console.log('\n提示：可输入单个序号（如：1）或多个序号用逗号分隔（如：1,3,5）');
-        
+        console.log('\n提示：输入 all 选择全部，或输入单个序号（如：1）或多个序号用逗号分隔（如：1,3,5）');
+
         // 获取用户输入
         const answer = await new Promise((resolve) => {
             rl.question('\n请输入要选择的账号序号: ', (input) => {
                 resolve(input.trim());
             });
         });
-        
+
         if (!answer) {
             console.log('❌ 未输入任何内容，操作取消');
             return;
         }
-        
+
         // 解析选择
-        const selectedIndexes = parseSelection(answer);
+        const selectedIndexes = parseSelection(answer, children.length);
         const selectedChildren = [];
-        
+
         for (const index of selectedIndexes) {
             if (index > children.length) {
                 console.log(`⚠ 序号 ${index} 超出范围，已跳过`);
@@ -127,17 +135,17 @@ async function selectBusinessAccounts(rl) {
             }
             selectedChildren.push(children[index - 1]);
         }
-        
+
         if (selectedChildren.length === 0) {
             console.log('❌ 没有选择任何有效的账号');
             return;
         }
-        
+
         console.log(`\n已选择 ${selectedChildren.length} 个账号：`);
         selectedChildren.forEach(child => {
             console.log(`  - ${child.email}`);
         });
-        
+
         // 保存到 gemini-mail.yaml（清空原有列表）
         console.log('\n正在保存到 gemini-mail.yaml...');
         saveSelectedAccounts(
@@ -146,9 +154,9 @@ async function selectBusinessAccounts(rl) {
             poolApiUrl,
             password
         );
-        
+
         console.log('✓ 操作完成！gemini-mail.yaml 已更新');
-        
+
     } catch (error) {
         console.error('选择账号失败:', error.message);
         throw error;
