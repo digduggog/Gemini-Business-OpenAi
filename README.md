@@ -52,38 +52,7 @@ npm run quick-refresh
 项目使用 YAML 配置文件，首次运行前需要创建：
 
 ### `temp-mail.yaml`（必需）
-
-临时邮箱服务配置：
-
-```yaml
-credentials:
-  account: your_account_here
-  password: your_password_here
-defaultDomain: '@example.com'
-emailApiUrl: 'https://mail.example.com'
-timezone: 'UTC+08:00'  # 邮件服务器时区
-```
-
-### `gemini-mail.yaml`（按需）
-
-Gemini Pool 平台配置：
-
-```yaml
-poolApiUrl: https://your-pool-api.example.com
-password: your_pool_password
-accounts:
-  parent:
-    email: parent@example.com
-    accountId: 123
-  children:
-    - email: child1@example.com
-      accountId: 124
-      tokens:
-        csesidx: "..."
-        host_c_oses: "..."
-        secure_c_ses: "..."
-        team_id: "..."
-```
+### `gemini-mail.yaml`（必需）
 
 > 💡 可参考 `temp-mail.example.yaml` 和 `gemini-mail.example.yaml` 创建配置文件。
 
