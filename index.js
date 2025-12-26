@@ -183,6 +183,11 @@ const geminiTools = [
         console.log("=".repeat(50));
 
         try {
+          // 每次定时任务开始时重新登录邮件系统，获取新的 sessionToken
+          console.log("\n🔑 正在重新登录邮件系统...");
+          sessionToken = await autoLogin();
+          console.log("✓ 邮件系统登录成功，sessionToken 已更新\n");
+
           await geminiAutoRefresh(sessionToken);
 
           console.log("\n" + "=".repeat(50));
