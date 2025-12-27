@@ -279,8 +279,138 @@ async function updateGeminiPool() {
     }
 }
 
+/**
+ * 更新平台上的单个账户
+ */
+async function updatePoolAccount(poolApiUrl, accountId, accountData, adminToken) {
+    try {
+        const response = await axios.put(`${poolApiUrl}/api/accounts/${accountId}`, {
+            team_id: accountData.team_id,
+            secure_c_ses: accountData.secure_c_ses,
+            host_c_oses: accountData.host_c_oses,
+            csesidx: accountData.csesidx,
+            user_agent: accountData.user_agent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36'
+        }, {
+            headers: {
+                'x-admin-token': adminToken
+            }
+        });
+
+        return response.data && response.data.success === true;
+    } catch (error) {
+        console.error(`更新账户 ${accountId} 失败:`, error.message);
+        if (error.response) {
+            console.error('响应数据:', error.response.data);
+        }
+        return false;
+    }
+}
+
+// 缓存登录 token，避免每次同步都重新登录
+let cachedAdminToken = null;
+let cachedTokenTime = 0;
+const TOKEN_CACHE_DURATION = 300000; // 5 分钟
+
+/**
+ * 获取或刷新 admin token（带缓存）
+ */
+async function getAdminToken(poolApiUrl, password) {
+    const now = Date.now();
+    if (cachedAdminToken && (now - cachedTokenTime) < TOKEN_CACHE_DURATION) {
+        return cachedAdminToken;
+    }
+
+    cachedAdminToken = await loginGeminiPool(poolApiUrl, password);
+    cachedTokenTime = now;
+    return cachedAdminToken;
+}
+
+/**
+ * 获取平台账户列表（静默模式，不打印日志）
+ */
+async function getPoolAccountsSilent(poolApiUrl, adminToken) {
+    try {
+        const response = await axios.get(`${poolApiUrl}/api/accounts`, {
+            headers: {
+                'x-admin-token': adminToken
+            }
+        });
+
+        if (response.data && response.data.accounts) {
+            return response.data.accounts;
+        } else {
+            throw new Error('获取账户列表失败');
+        }
+    } catch (error) {
+        throw error;
+    }
+}
+
+/**
+ * 增量同步单个账户到 Gemini Pool 平台
+ * 刷新一个 token 后立即调用此函数同步
+ * @param {string} email - 子号邮箱（用于日志）
+ * @param {Object} tokens - 包含 team_id, secure_c_ses, host_c_oses, csesidx
+ * @returns {Promise<{success: boolean, action: string, error?: string}>}
+ */
+async function syncSingleAccount(email, tokens) {
+    try {
+        // 读取配置
+        const yamlData = loadAccountsFromYaml();
+        const poolApiUrl = yamlData.poolApiUrl;
+        const password = yamlData.password;
+
+        if (!poolApiUrl) {
+            return { success: false, action: 'skip', error: 'poolApiUrl 未配置' };
+        }
+
+        // 获取 admin token（使用缓存）
+        const adminToken = await getAdminToken(poolApiUrl, password);
+
+        // 获取平台账户列表
+        const poolAccounts = await getPoolAccountsSilent(poolApiUrl, adminToken);
+
+        // 通过 team_id 匹配找到对应账户
+        const matchedAccount = poolAccounts.find(acc => acc.team_id === tokens.team_id);
+
+        const accountData = {
+            team_id: tokens.team_id,
+            secure_c_ses: tokens.secure_c_ses,
+            host_c_oses: tokens.host_c_oses,
+            csesidx: tokens.csesidx,
+            user_agent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36'
+        };
+
+        if (matchedAccount) {
+            // 更新已有账户
+            const success = await updatePoolAccount(poolApiUrl, matchedAccount.id, accountData, adminToken);
+            if (success) {
+                console.log(`   🔄 Pool 同步: 已更新账户 (ID: ${matchedAccount.id})`);
+                return { success: true, action: 'updated', poolId: matchedAccount.id };
+            } else {
+                return { success: false, action: 'update_failed', error: '更新失败' };
+            }
+        } else {
+            // 添加新账户
+            const success = await addAccount(poolApiUrl, accountData, adminToken);
+            if (success) {
+                console.log(`   🔄 Pool 同步: 已添加新账户`);
+                return { success: true, action: 'added' };
+            } else {
+                return { success: false, action: 'add_failed', error: '添加失败' };
+            }
+        }
+    } catch (error) {
+        console.error(`   ❌ Pool 同步失败: ${error.message}`);
+        return { success: false, action: 'error', error: error.message };
+    }
+}
+
 // 导出函数供其他模块使用
-module.exports = updateGeminiPool;
+module.exports = {
+    updateGeminiPool,
+    syncSingleAccount
+};
 
 // 如果直接运行此文件，则执行主函数
 if (require.main === module) {

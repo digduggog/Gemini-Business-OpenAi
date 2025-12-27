@@ -162,22 +162,53 @@ async function deleteAccount(token, rl = null) {
                 return;
             }
 
-            // 批量删除
-            console.log("\n开始批量删除...");
+            // 批量删除（并发执行）
+            const CONCURRENCY = 10; // 并发数
+            console.log(`\n开始批量删除（并发数: ${CONCURRENCY}）...`);
             let successCount = 0;
             let failCount = 0;
+            let completedCount = 0;
 
-            for (const account of accountsToDelete) {
-                try {
-                    await performDelete(token, account.accountId);
-                    console.log(`✓ 删除成功: ${account.email}`);
-                    successCount++;
-                } catch (error) {
-                    console.log(`✗ 删除失败: ${account.email} - ${error.message}`);
-                    failCount++;
+            // 并发执行函数
+            const executeWithConcurrency = async (items, concurrency, executor) => {
+                const results = [];
+                const executing = [];
+
+                for (const item of items) {
+                    const p = Promise.resolve().then(() => executor(item)).then(
+                        result => ({ status: 'fulfilled', value: result, item }),
+                        error => ({ status: 'rejected', reason: error, item })
+                    );
+                    results.push(p);
+
+                    if (items.length >= concurrency) {
+                        const e = p.then(() => executing.splice(executing.indexOf(e), 1));
+                        executing.push(e);
+                        if (executing.length >= concurrency) {
+                            await Promise.race(executing);
+                        }
+                    }
                 }
-                // 添加小延迟避免请求过快
-                await new Promise(resolve => setTimeout(resolve, 300));
+
+                return Promise.all(results);
+            };
+
+            // 执行并发删除
+            const results = await executeWithConcurrency(accountsToDelete, CONCURRENCY, async (account) => {
+                await performDelete(token, account.accountId);
+                completedCount++;
+                console.log(`✓ [${completedCount}/${accountsToDelete.length}] 删除成功: ${account.email}`);
+                return account;
+            });
+
+            // 统计结果
+            for (const result of results) {
+                if (result.status === 'fulfilled') {
+                    successCount++;
+                } else {
+                    failCount++;
+                    console.log(`✗ 删除失败: ${result.item.email} - ${result.reason.message}`);
+                }
             }
 
             console.log("\n" + "=".repeat(50));

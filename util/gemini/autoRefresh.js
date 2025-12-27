@@ -892,6 +892,7 @@ async function openGeminiChildInteractive(token, childAccount, rl, maxRetries = 
  * @param {number} maxAccountRetries - 账号级别最大重试次数
  */
 async function refreshChildToken(childAccount, token, maxAccountRetries = 3) {
+    const { syncSingleAccount } = require('./updateGeminiPool');
     let lastError = null;
 
     for (let attempt = 1; attempt <= maxAccountRetries; attempt++) {
@@ -909,7 +910,16 @@ async function refreshChildToken(childAccount, token, maxAccountRetries = 3) {
             updateChildToken(childAccount.email, newTokens);
 
             console.log(`   ✓ Token 已更新到配置文件`);
-            return { success: true, email: childAccount.email, tokens: newTokens };
+
+            // 立即同步到 Gemini Pool
+            const syncResult = await syncSingleAccount(childAccount.email, newTokens);
+
+            return {
+                success: true,
+                email: childAccount.email,
+                tokens: newTokens,
+                poolSync: syncResult
+            };
         } catch (error) {
             lastError = error;
             console.error(`   ❌ 刷新失败: ${error.message}`);
@@ -958,21 +968,44 @@ async function autoRefreshGeminiTokens(currentLoginEmail, token) {
         console.log(`   ${index + 1}. ${child.email} (ID: ${child.accountId})`);
     });
 
-    // 3. 循环刷新每个子号的 token
-    console.log("\n📋 步骤 3: 开始刷新 Token");
+    // 3. 并发刷新子号的 token（并发数 3）
+    console.log("\n📋 步骤 3: 开始刷新 Token（并发数: 3）");
     console.log("-".repeat(50));
 
+    const CONCURRENCY_LIMIT = 3;
     const results = [];
-    for (let i = 0; i < children.length; i++) {
-        const child = children[i];
-        console.log(`\n[${i + 1}/${children.length}] 处理子号: ${child.email}`);
 
-        const result = await refreshChildToken(child, token);
-        results.push(result);
+    // 分批处理，每批并发 CONCURRENCY_LIMIT 个
+    for (let i = 0; i < children.length; i += CONCURRENCY_LIMIT) {
+        const batch = children.slice(i, i + CONCURRENCY_LIMIT);
+        const batchNum = Math.floor(i / CONCURRENCY_LIMIT) + 1;
+        const totalBatches = Math.ceil(children.length / CONCURRENCY_LIMIT);
 
-        // 添加延迟，避免请求过快
-        if (i < children.length - 1) {
-            console.log("   ⏳ 等待 2 秒后继续...");
+        console.log(`\n📦 批次 ${batchNum}/${totalBatches}（${batch.length} 个账号并发处理）`);
+        batch.forEach((child, idx) => {
+            console.log(`   - [${i + idx + 1}/${children.length}] ${child.email}`);
+        });
+
+        // 并发执行当前批次
+        const batchPromises = batch.map((child, idx) => {
+            const globalIdx = i + idx + 1;
+            console.log(`\n🔄 [${globalIdx}/${children.length}] 开始处理: ${child.email}`);
+            return refreshChildToken(child, token);
+        });
+
+        const batchResults = await Promise.all(batchPromises);
+        results.push(...batchResults);
+
+        // 批次完成后输出结果
+        console.log(`\n✅ 批次 ${batchNum} 完成:`);
+        batchResults.forEach((result, idx) => {
+            const status = result.success ? '✓ 成功' : `✗ 失败: ${result.error}`;
+            console.log(`   - ${batch[idx].email}: ${status}`);
+        });
+
+        // 如果还有下一批，等待 2 秒
+        if (i + CONCURRENCY_LIMIT < children.length) {
+            console.log("\n   ⏳ 等待 2 秒后处理下一批次...");
             await new Promise(resolve => setTimeout(resolve, 2000));
         }
     }

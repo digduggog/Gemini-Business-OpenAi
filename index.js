@@ -3,7 +3,7 @@ const createAccount = require("./util/mail/createAccount");
 const deleteAccount = require("./util/mail/deleteAccount");
 const getVerificationCode = require("./util/mail/getVerificationCode");
 const geminiAutoRefresh = require("./util/gemini/geminiAutoRefresh");
-const updateGeminiPool = require("./util/gemini/updateGeminiPool");
+const { updateGeminiPool } = require("./util/gemini/updateGeminiPool");
 const selectBusinessAccounts = require("./util/gemini/selectBusinessAccounts");
 const cleanInvalidAccounts = require("./util/gemini/cleanInvalidAccounts");
 const { openGeminiChildInteractive } = require("./util/gemini/autoRefresh");
@@ -81,18 +81,14 @@ const geminiTools = [
   },
   {
     id: "3",
-    name: "（HOT）刷新所有账户 Token 并同步到 Gemini Pool",
+    name: "（HOT）刷新所有账户 Token（自动增量同步到 Pool）",
     action: async () => {
       if (!sessionToken) {
         throw new Error("会话令牌未初始化，请重启程序");
       }
       await geminiAutoRefresh(sessionToken);
-
-      // 自动继续同步到 Gemini Pool（删除所有并重新添加）
-      console.log("\n" + "=".repeat(50));
-      console.log("正在同步 Token 到 Gemini Pool 平台...");
-      console.log("=".repeat(50));
-      await updateGeminiPool();
+      // 增量同步已在刷新过程中完成，无需额外调用
+      console.log("\n✓ 刷新完成，所有账户已增量同步到 Gemini Pool");
     },
   },
   {
@@ -190,12 +186,8 @@ const geminiTools = [
 
           await geminiAutoRefresh(sessionToken);
 
-          console.log("\n" + "=".repeat(50));
-          console.log("正在同步 Token 到 Gemini Pool 平台...");
-          console.log("=".repeat(50));
-          await updateGeminiPool();
-
-          console.log("\n✅ 定时刷新任务完成！");
+          // 增量同步已在刷新过程中完成
+          console.log("\n✅ 定时刷新任务完成！所有账户已增量同步到 Gemini Pool");
           const nextRun = new Date(Date.now() + INTERVAL_MS);
           console.log(`⏰ 下次执行时间: ${nextRun.toLocaleString()}`);
         } catch (error) {

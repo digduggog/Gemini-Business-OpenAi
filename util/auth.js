@@ -10,6 +10,46 @@ function ensureFetchAvailable() {
 }
 
 /**
+ * 延迟函数
+ */
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * 带重试的 fetch 请求
+ * @param {string} url - 请求 URL
+ * @param {object} options - fetch 选项
+ * @param {number} maxRetries - 最大重试次数
+ * @returns {Promise<Response>}
+ */
+async function fetchWithRetry(url, options, maxRetries = 3) {
+    let lastError;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const response = await fetch(url, options);
+            return response;
+        } catch (error) {
+            lastError = error;
+            const errorMessage = error.cause?.code || error.code || error.message;
+
+            if (attempt < maxRetries) {
+                const waitTime = Math.pow(2, attempt) * 1000; // 2秒, 4秒, 8秒
+                console.log(`\n⚠️  网络请求失败 (尝试 ${attempt}/${maxRetries}): ${errorMessage}`);
+                console.log(`   等待 ${waitTime / 1000} 秒后重试...`);
+                await delay(waitTime);
+            } else {
+                console.log(`\n❌ 网络请求失败 (尝试 ${attempt}/${maxRetries}): ${errorMessage}`);
+            }
+        }
+    }
+
+    // 所有重试都失败了，抛出最后一个错误
+    throw new Error(`网络请求失败，已重试 ${maxRetries} 次: ${lastError.message}`);
+}
+
+/**
  * 执行母号登录，返回 token
  */
 async function performLogin({ account, password, defaultDomain, loginEmail, emailApiUrl }) {
@@ -25,13 +65,13 @@ async function performLogin({ account, password, defaultDomain, loginEmail, emai
     console.log("登录邮箱:", loginEmail);
     console.log("登录地址:", loginUrl);
 
-    const response = await fetch(loginUrl, {
+    const response = await fetchWithRetry(loginUrl, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
         },
         body: JSON.stringify(requestPayload),
-    });
+    }, 3);
 
     if (!response.ok) {
         throw new Error(`登录请求失败，HTTP 状态码 ${response.status}`);
